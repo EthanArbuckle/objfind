@@ -267,7 +267,7 @@ int main(int argc, char *argv[]) {
         
         printf("\n");
         
-        size_t processed = 0;
+        __block size_t processed = 0;
         printf(ANSI_CLEAR_LINE "Scanning processes: [                    ] 0%%  ");
         fflush(stdout);
         
@@ -275,6 +275,9 @@ int main(int argc, char *argv[]) {
         int dev_null = open("/dev/null", O_WRONLY);
         dup2(dev_null, STDERR_FILENO);
         close(dev_null);
+    
+        dispatch_group_t group = dispatch_group_create();
+        dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0);
         
         for (int i = 0; i < proc_count; i++) {
             char *proc_name = procs[i].kp_proc.p_comm;
@@ -282,31 +285,35 @@ int main(int argc, char *argv[]) {
             if (pid == 0 || pid == getpid()) {
                 continue;
             }
-            
-            processed++;
-            float progress = (float)processed / proc_count * 100;
-            
-            char progress_bar[22] = "[                    ]";
-            int filled = (int)((progress / 100) * 20);
-            for (int j = 0; j < filled; j++) {
-                progress_bar[j + 1] = '=';
+
+            if (!should_scan_process(proc_name)) {
+                continue;
             }
-            if (filled < 20) {
-                progress_bar[filled + 1] = '>';
-            }
-            
-            printf("\r%s%s %.1f%% - %s%s%s",
-                   ANSI_CLEAR_LINE,
-                   progress_bar, progress,
-                   ANSI_YELLOW, proc_name, ANSI_RESET);
-            fflush(stdout);
-            
-            if (should_scan_process(proc_name)) {
-                
+
+            dispatch_group_async(group, queue, ^{
                 scan_process_for_class_instances(proc_name, pid, target_class, exact_match);
-                printf("%sScanning processes...%s", ANSI_WHITE, ANSI_RESET);
-            }
+                
+                float progress = (float)processed++ / proc_count * 100;
+                char progress_bar[22] = "[                    ]";
+                int filled = (int)((progress / 100) * 20);
+                for (int j = 0; j < filled; j++) {
+                    progress_bar[j + 1] = '=';
+                }
+                if (filled < 20) {
+                    progress_bar[filled + 1] = '>';
+                }
+                
+                printf("\r%s%s %.1f%% - %s%s%s",
+                       ANSI_CLEAR_LINE,
+                       progress_bar, progress,
+                       ANSI_YELLOW, proc_name, ANSI_RESET);
+                fflush(stdout);
+                
+            });
         }
+        
+        dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+        dispatch_release(group);
         
         printf("\n");
 
